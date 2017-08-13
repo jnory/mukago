@@ -1,22 +1,24 @@
 package main
 
 import (
-	"go/token"
+	"bytes"
 	"flag"
-	"go/parser"
-	"log"
-	"go/build"
-	"os"
 	"go/ast"
-	"strings"
-	"go/printer"
+	"go/build"
+	"go/parser"
+	"go/token"
+	"log"
+	"os"
 	"path/filepath"
 	"sort"
-	"reflect"
+	"strings"
+	"io/ioutil"
+	"errors"
+	"fmt"
 )
 
 type Args struct {
-	path string
+	path   string
 	prefix string
 }
 
@@ -30,7 +32,7 @@ func isStdLib(name, srcDir string) bool {
 	return pkg.Goroot
 }
 
-func getArgs() Args{
+func getArgs() Args {
 	f := flag.String("file", "", "path too a file.")
 	prefix := flag.String("prefix", "", "prefix of the local packages.")
 	flag.Parse()
@@ -42,14 +44,14 @@ func getArgs() Args{
 	}
 
 	return Args{
-		path: path,
+		path:   path,
 		prefix: *prefix,
 	}
 }
 
 func loadFile(path string) (*token.FileSet, *ast.File, error) {
 	fileSet := token.NewFileSet()
-	file, err := parser.ParseFile(fileSet, path, nil, parser.ParseComments)
+	file, err := parser.ParseFile(fileSet, path, nil, parser.ImportsOnly)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -60,14 +62,7 @@ func loadFile(path string) (*token.FileSet, *ast.File, error) {
 func reorderImports(prefix string, srcDir string, file *ast.File) {
 	for _, d := range file.Decls {
 		genDecl, ok := d.(*ast.GenDecl)
-		if !ok{
-			decl := d.(*ast.FuncDecl)
-			log.Println(decl.Body.List)
-			log.Println(decl.Doc)
-			for _, item := range decl.Body.List {
-				log.Println(reflect.TypeOf(item).String())
-				log.Println(item)
-			}
+		if !ok {
 			continue
 		}
 		if genDecl.Tok != token.IMPORT {
@@ -79,7 +74,6 @@ func reorderImports(prefix string, srcDir string, file *ast.File) {
 		for _, s := range genDecl.Specs {
 			spec := s.(*ast.ImportSpec)
 			name := strings.Trim(spec.Path.Value, `"`)
-			spec.Path.ValuePos=0
 
 			if isStdLib(name, srcDir) {
 				stdLibAst = append(stdLibAst, spec)
@@ -90,23 +84,127 @@ func reorderImports(prefix string, srcDir string, file *ast.File) {
 			}
 		}
 
-		sort.Slice(stdLibAst, func(i, j int) bool{
+		sort.Slice(stdLibAst, func(i, j int) bool {
 			return stdLibAst[i].(*ast.ImportSpec).Path.Value < stdLibAst[i].(*ast.ImportSpec).Path.Value
 		})
-		stdLibAst = append(stdLibAst, &ast.ImportSpec{Path:&ast.BasicLit{}})
+		stdLibAst = append(stdLibAst, &ast.ImportSpec{Path: &ast.BasicLit{}})
 
-		sort.Slice(otherLibAst, func(i, j int) bool{
+		sort.Slice(otherLibAst, func(i, j int) bool {
 			return otherLibAst[i].(*ast.ImportSpec).Path.Value < otherLibAst[i].(*ast.ImportSpec).Path.Value
 		})
-		otherLibAst = append(otherLibAst, &ast.ImportSpec{Path:&ast.BasicLit{}})
+		otherLibAst = append(otherLibAst, &ast.ImportSpec{Path: &ast.BasicLit{}})
 
-		sort.Slice(localLibAst, func(i, j int) bool{
+		sort.Slice(localLibAst, func(i, j int) bool {
 			return localLibAst[i].(*ast.ImportSpec).Path.Value < localLibAst[i].(*ast.ImportSpec).Path.Value
 		})
 
 		genDecl.Specs = append(append(stdLibAst, otherLibAst...), localLibAst...)
 	}
 
+}
+
+func generate(file *ast.File, cm ast.CommentMap) ([]string, map[int]int) {
+	importStmts := make([]string, 0)
+	parenMap := make(map[int]int)
+	for _, d := range file.Decls {
+		genDecl, ok := d.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		if genDecl.Tok != token.IMPORT {
+			continue
+		}
+
+		if genDecl.Lparen.IsValid() {
+			// start from zero.
+			parenMap[int(genDecl.Lparen)-1] = int(genDecl.Rparen)
+		}
+
+		buf := bytes.NewBufferString("import (\n")
+		for _, s := range genDecl.Specs {
+			spec := s.(*ast.ImportSpec)
+
+			comments, ok := cm[spec]
+			if ok {
+				for _, comment := range comments {
+					buf.WriteString("\t")
+					buf.WriteString(comment.Text())
+					buf.WriteString("\n")
+				}
+			}
+
+			buf.WriteString("\t")
+			if spec.Name != nil {
+				buf.WriteString(spec.Name.String())
+				buf.WriteString(" ")
+			}
+			buf.WriteString(spec.Path.Value)
+			buf.WriteString("\n")
+		}
+		buf.WriteString(")\n")
+		importStmts = append(importStmts, buf.String())
+	}
+
+
+	return importStmts, parenMap
+}
+
+func replaceImports(path string, importStmts []string, parenMap map[int]int) (string, error){
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	bodyBytes, err := ioutil.ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+
+	buf := bytes.NewBufferString("")
+	for _, imp := range importStmts {
+		pos := bytes.Index(bodyBytes, []byte("import"))
+		buf.Write(bodyBytes[:pos])
+
+		end := func() int {
+			next := string(bodyBytes[pos+6:pos+7])
+			if next != " " && next != "\n" && next != "(" && next != "\t" {
+				return -1
+			}
+
+			for i := pos+6; i < len(bodyBytes); i++ {
+				c := string(bodyBytes[i:i+1])
+				if c == "(" {
+					e, ok := parenMap[i]
+					if !ok {
+						return -1
+					}
+					return e
+				} else if c == " " || c == "\t" || c == "\n" {
+					continue
+				} else {
+					for j := i; j < len(bodyBytes); j++ {
+						if string(bodyBytes[j:j+1]) == "\n" {
+							return j+1
+						}
+					}
+				}
+			}
+			return -1
+		}()
+
+		if end < 0 {
+			return "", errors.New("Failed to find import statements.")
+		}
+
+		buf.WriteString(imp)
+		buf.WriteString("\n")
+		bodyBytes = bytes.TrimLeft(bodyBytes[end:], " \t\n")
+	}
+
+	buf.Write(bodyBytes)
+
+	return buf.String(), nil
 }
 
 func main() {
@@ -119,38 +217,15 @@ func main() {
 	}
 
 	srcDir := filepath.Dir(args.path)
-	cm := ast.NewCommentMap(fileSet, file, file.Comments)
 	reorderImports(args.prefix, srcDir, file)
-	set := token.NewFileSet()
-	cmUp := ast.NewCommentMap(set, file, file.Comments)
-	var rev = make(map[string]ast.Node)
-	for keyNode, cgs := range cmUp {
-		text := ""
-		for _, cg := range cgs {
-			text += cg.Text()
-		}
 
-		rev[text] = keyNode
-	}
-	for keyNode, cgs := range cm {
-		text := ""
-		for _, cg := range cgs {
-			text += cg.Text()
-		}
-		cmUp.Update(rev[text], keyNode)
-	}
-	log.Println(cmUp)
-	for _, cg := range file.Comments {
-		for _, c := range cg.List {
-			log.Println(c)
-		}
-	}
-	file.Comments = cmUp.Comments()
-	for _, cg := range file.Comments {
-		for _, c := range cg.List {
-			log.Println(c)
-		}
-	}
+	cm := ast.NewCommentMap(fileSet, file, file.Comments)
 
-	printer.Fprint(os.Stdout, set, file)
+	importStmt, parenMap := generate(file, cm)
+	replaced, err := replaceImports(args.path, importStmt, parenMap)
+	if err != nil {
+		log.Println(err)
+		os.Exit(1)
+	}
+	fmt.Fprint(os.Stdout, replaced)
 }
