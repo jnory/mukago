@@ -2,19 +2,19 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
+	"fmt"
 	"go/ast"
 	"go/build"
 	"go/parser"
 	"go/token"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"io/ioutil"
-	"errors"
-	"fmt"
 )
 
 type Args struct {
@@ -145,11 +145,10 @@ func generate(file *ast.File, cm ast.CommentMap) ([]string, map[int]int) {
 		importStmts = append(importStmts, buf.String())
 	}
 
-
 	return importStmts, parenMap
 }
 
-func replaceImports(path string, importStmts []string, parenMap map[int]int) (string, error){
+func replaceImports(path string, importStmts []string, parenMap map[int]int) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -167,13 +166,13 @@ func replaceImports(path string, importStmts []string, parenMap map[int]int) (st
 		buf.Write(bodyBytes[:pos])
 
 		end := func() int {
-			next := string(bodyBytes[pos+6:pos+7])
+			next := string(bodyBytes[pos+6 : pos+7])
 			if next != " " && next != "\n" && next != "(" && next != "\t" {
 				return -1
 			}
 
-			for i := pos+6; i < len(bodyBytes); i++ {
-				c := string(bodyBytes[i:i+1])
+			for i := pos + 6; i < len(bodyBytes); i++ {
+				c := string(bodyBytes[i : i+1])
 				if c == "(" {
 					e, ok := parenMap[i]
 					if !ok {
@@ -185,7 +184,7 @@ func replaceImports(path string, importStmts []string, parenMap map[int]int) (st
 				} else {
 					for j := i; j < len(bodyBytes); j++ {
 						if string(bodyBytes[j:j+1]) == "\n" {
-							return j+1
+							return j + 1
 						}
 					}
 				}
