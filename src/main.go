@@ -88,17 +88,21 @@ func reorderImports(prefix string, srcDir string, file *ast.File) {
 		}
 
 		sort.Slice(stdLibAst, func(i, j int) bool {
-			return stdLibAst[i].(*ast.ImportSpec).Path.Value < stdLibAst[i].(*ast.ImportSpec).Path.Value
+			return stdLibAst[i].(*ast.ImportSpec).Path.Value < stdLibAst[j].(*ast.ImportSpec).Path.Value
 		})
-		stdLibAst = append(stdLibAst, &ast.ImportSpec{Path: &ast.BasicLit{}})
+		if len(stdLibAst) > 0 {
+			stdLibAst = append(stdLibAst, &ast.ImportSpec{Path: &ast.BasicLit{}})
+		}
 
 		sort.Slice(otherLibAst, func(i, j int) bool {
-			return otherLibAst[i].(*ast.ImportSpec).Path.Value < otherLibAst[i].(*ast.ImportSpec).Path.Value
+			return otherLibAst[i].(*ast.ImportSpec).Path.Value < otherLibAst[j].(*ast.ImportSpec).Path.Value
 		})
-		otherLibAst = append(otherLibAst, &ast.ImportSpec{Path: &ast.BasicLit{}})
+		if len(otherLibAst) > 0 {
+			otherLibAst = append(otherLibAst, &ast.ImportSpec{Path: &ast.BasicLit{}})
+		}
 
 		sort.Slice(localLibAst, func(i, j int) bool {
-			return localLibAst[i].(*ast.ImportSpec).Path.Value < localLibAst[i].(*ast.ImportSpec).Path.Value
+			return localLibAst[i].(*ast.ImportSpec).Path.Value < localLibAst[j].(*ast.ImportSpec).Path.Value
 		})
 
 		genDecl.Specs = append(append(stdLibAst, otherLibAst...), localLibAst...)
