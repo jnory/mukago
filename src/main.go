@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"flag"
-	"fmt"
 	"go/ast"
 	"go/build"
 	"go/parser"
@@ -15,11 +14,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"fmt"
 )
 
 type Args struct {
 	path   string
 	prefix string
+	overwrite bool
 }
 
 func isStdLib(name, srcDir string) bool {
@@ -35,6 +36,7 @@ func isStdLib(name, srcDir string) bool {
 func getArgs() Args {
 	f := flag.String("file", "", "path too a file.")
 	prefix := flag.String("prefix", "", "prefix of the local packages.")
+	overwrite := flag.Bool("w", false, "overwrite file.")
 	flag.Parse()
 
 	path := *f
@@ -46,6 +48,7 @@ func getArgs() Args {
 	return Args{
 		path:   path,
 		prefix: *prefix,
+		overwrite: *overwrite,
 	}
 }
 
@@ -226,5 +229,18 @@ func main() {
 		log.Println(err)
 		os.Exit(1)
 	}
-	fmt.Fprint(os.Stdout, replaced)
+
+	if args.overwrite {
+		err = ioutil.WriteFile(args.path, []byte(replaced), 0644)
+		if err != nil {
+			log.Println(err)
+			os.Exit(1)
+		}
+	} else {
+		_, err := fmt.Fprint(os.Stdout, replaced)
+		if err != nil {
+			log.Println(err)
+			os.Exit(1)
+		}
+	}
 }
