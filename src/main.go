@@ -131,6 +131,12 @@ func generate(file *ast.File, cm ast.CommentMap) ([]string, map[int]int) {
 		for _, s := range genDecl.Specs {
 			spec := s.(*ast.ImportSpec)
 
+			path := spec.Path.Value
+			if path == "" {
+				buf.WriteString("\n")
+				continue
+			}
+
 			comments, ok := cm[spec]
 			if ok {
 				for _, comment := range comments {
@@ -145,7 +151,8 @@ func generate(file *ast.File, cm ast.CommentMap) ([]string, map[int]int) {
 				buf.WriteString(spec.Name.String())
 				buf.WriteString(" ")
 			}
-			buf.WriteString(spec.Path.Value)
+
+			buf.WriteString(path)
 			buf.WriteString("\n")
 		}
 		buf.WriteString(")\n")
