@@ -36,7 +36,7 @@ func isStdLib(name, srcDir string) bool {
 }
 
 func getArgs() Args {
-	f := flag.String("file", "", "path too a file.")
+	f := flag.String("file", "", "path to a file.")
 	prefix := flag.String("prefix", "", "prefix of the local packages.")
 	overwrite := flag.Bool("w", false, "overwrite file.")
 	gofmt := flag.Bool("fmt", false, "apply gofmt too.")
